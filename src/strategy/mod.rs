@@ -49,14 +49,22 @@ pub(crate) mod hybrid;
 ))]
 compile_error!("experimental-thread-local is incompatible with internal-test-strategies as it enables #[no_std]");
 
-#[cfg(feature = "internal-test-strategies")]
+#[cfg(all(feature = "genlock-load", feature = "experimental-thread-local"))]
+compile_error!(
+    "genlock-load is incompatible with experimental-thread-local as it needs std::sync::RwLock"
+);
+
+#[cfg(any(feature = "internal-test-strategies", feature = "genlock-load"))]
 mod rw_lock;
 // Do not use from outside of the crate.
 #[cfg(feature = "internal-test-strategies")]
 #[doc(hidden)]
 pub mod test_strategies;
 
+#[cfg(not(feature = "genlock-load"))]
 use self::hybrid::{DefaultConfig, HybridStrategy};
+#[cfg(feature = "genlock-load")]
+use std::sync::RwLock;
 
 /// The default strategy.
 ///
@@ -98,7 +106,20 @@ use self::hybrid::{DefaultConfig, HybridStrategy};
 ///
 /// [`load`]: crate::ArcSwapAny::load
 /// [`Guard`]: crate::Guard
+#[cfg(not(feature = "genlock-load"))]
 pub type DefaultStrategy = HybridStrategy<DefaultConfig>;
+
+/// The default strategy under the `genlock-load` mitigation feature.
+///
+/// Downstream mitigation for the debt/hazard-pointer lifetime class of
+/// [#156]/[#164]: every load takes the instance's RwLock, loads the pointer
+/// and increments its refcount while the writer is fully excluded, so a
+/// `Guard` can never observe a freed value. Readers contend with each other
+/// and with writers on the lock (loads cost roughly an uncontended mutex and
+/// writers serialize); the lock-free guarantees are deliberately given up.
+/// Reclamation remains exact.
+#[cfg(feature = "genlock-load")]
+pub type DefaultStrategy = RwLock<()>;
 
 /// Strategy for isolating instances.
 ///

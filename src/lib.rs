@@ -174,7 +174,10 @@ use crate::access::{Access, Map};
 pub use crate::as_raw::AsRaw;
 pub use crate::cache::Cache;
 pub use crate::ref_cnt::RefCnt;
+#[cfg(not(feature = "genlock-load"))]
 use crate::strategy::hybrid::{DefaultConfig, HybridStrategy};
+#[cfg(feature = "genlock-load")]
+use std::sync::RwLock;
 use crate::strategy::sealed::Protected;
 use crate::strategy::{CaS, Strategy};
 pub use crate::strategy::{DefaultStrategy, IndependentStrategy};
@@ -794,9 +797,14 @@ impl<T> ArcSwapOption<T> {
         Self {
             ptr: AtomicPtr::new(ptr::null_mut()),
             _phantom_arc: PhantomData,
+            #[cfg(not(feature = "genlock-load"))]
             strategy: HybridStrategy {
                 _config: DefaultConfig,
             },
+            // RwLock::new is const-stable, so `const_empty` stays const under
+            // the genlock-load mitigation feature.
+            #[cfg(feature = "genlock-load")]
+            strategy: RwLock::new(()),
         }
     }
 }
@@ -1272,6 +1280,12 @@ mod tests {
 
     /// Accessing the value inside ArcSwap with Guards (and checks for the reference
     /// counts).
+    ///
+    /// Pins the hybrid debt protocol's exact ref-count bookkeeping (a Guard
+    /// borrows without owning a count until a writer pays it). Under the
+    /// genlock-load mitigation every load owns its count up front, so these
+    /// counts don't apply there.
+    #[cfg(not(feature = "genlock-load"))]
     #[test]
     fn load_cnt() {
         let a = Arc::new(0);
@@ -1309,6 +1323,10 @@ mod tests {
 
     /// There can be only limited amount of leases on one thread. Following ones are
     /// created, but contain full Arcs.
+    ///
+    /// Debt fast-slot exhaustion is a hybrid-strategy concept; genlock-load
+    /// has no slots to overflow.
+    #[cfg(not(feature = "genlock-load"))]
     #[test]
     fn lease_overflow() {
         #[cfg(miri)]
